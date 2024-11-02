@@ -1,0 +1,12 @@
+name: RegionSaver
+version: '1.0'
+main: fr.niixoz.regionSaver.RegionSaver
+api-version: '1.20'
+authors: [ NiixoZ ]
+description: Region Saver plugin for EnderCube
+
+commands:
+  regionsaver:
+    description: Permet de faire une save des Regions.
+    usage: /regionsaver <save>
+    aliases: [ rgsaver ]
