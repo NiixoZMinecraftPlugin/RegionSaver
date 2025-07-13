@@ -3,13 +3,19 @@ package fr.niixoz.regionSaver;
 import com.google.common.io.Files;
 import fr.niixoz.regionSaver.managers.CommandsManager;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.World;
+import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
 
 public final class RegionSaver extends JavaPlugin {
 
@@ -18,13 +24,22 @@ public final class RegionSaver extends JavaPlugin {
     private static boolean BIG_RADIUS = true;
     private static boolean PRINT_REGIONS = false;
 
+    private static int BATCH_SIZE = 50;
+    private static long PAUSE_MILLIS = 100;
+
     public static File playerData;
     public static File outputFolder;
     private static RegionSaver instance;
 
+    private static final AtomicInteger COPY_COUNTER = new AtomicInteger();
+
     @Override
     public void onEnable() {
         instance = this;
+
+        saveDefaultConfig();
+        BATCH_SIZE = getConfig().getInt("batchSize", 50);
+        PAUSE_MILLIS = getConfig().getLong("pauseMillis", 100);
 
         playerData = new File(Bukkit.getPluginManager().getPlugin("SurvivalCore").getDataFolder(), "playerdata");
         outputFolder = new File(getDataFolder(), "saved_regions");
@@ -44,9 +59,45 @@ public final class RegionSaver extends JavaPlugin {
         return instance;
     }
 
+    public void startBackup(CommandSender sender) {
+        // Préparation sync : flush & désactive autosave
+        Bukkit.getScheduler().runTask(this, () -> {
+            Map<World, Boolean> previous = new HashMap<>();
+            for (World w : Bukkit.getWorlds()) {
+                w.save();
+                previous.put(w, w.isAutoSave());
+                w.setAutoSave(false);
+            }
+            sender.sendMessage(ChatColor.GRAY + "[RegionSaver] Début de la sauvegarde…");
+
+            // Sauvegarde asynchrone
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                long start = System.currentTimeMillis();
+                boolean ok = true;
+                try {
+                    HashMap<String, List<String>> regions = detectRegions();
+                    copyRegionsInSaveFolder(regions);
+                } catch (Exception ex) {
+                    ok = false;
+                    getLogger().log(Level.SEVERE, "Backup failed", ex);
+                }
+                long dur = System.currentTimeMillis() - start;
+
+                // Restauration sync
+                boolean finalOk = ok;
+                Bukkit.getScheduler().runTask(this, () -> {
+                    previous.forEach(World::setAutoSave);
+                    String msg = finalOk ? ChatColor.GREEN + "[RegionSaver] Sauvegarde terminée en " + dur + "ms." : ChatColor.RED + "[RegionSaver] Sauvegarde échouée (voir console).";
+                    sender.sendMessage(msg);
+                });
+            });
+        });
+    }
+
+    /*
     public static void saveRegions() {
         copyRegionsInSaveFolder(detectRegions());
-    }
+    }*/
 
     private static HashMap<String, List<String>> detectRegions() {
 
@@ -56,22 +107,11 @@ public final class RegionSaver extends JavaPlugin {
 
         for(File file : Objects.requireNonNull(playerData.listFiles())) {
             if(file.getName().endsWith(".yml")) {
-                try {
-                    InputStream inputStream = new FileInputStream(file);
+                try (InputStream inputStream = new FileInputStream(file)) {
                     Map<String, Object> data = yaml.load(inputStream);
                     if(data.containsKey("homes")) {
                         Map<String, Object> playerHomes = (Map<String, Object>) data.get("homes");
-                        String username = "Unkown Player";
-                        if (data.containsKey("player")) {
-                            Map<String, Object> player = (Map<String, Object>) data.get("player");
-                            Map<String, Object> info = (Map<String, Object>) player.get("info");
-                            username = (String) info.get("lastSeenAs");
-                        } else {
-                            username = (String) data.get("username");
-                        }
-
-                        List<HomeLocation> playerHomesList = getHomes(playerHomes);
-                        homes.addAll(playerHomesList);
+                        homes.addAll(getHomes(playerHomes));
                     }
                 }
                 catch(Exception e) {
@@ -79,8 +119,6 @@ public final class RegionSaver extends JavaPlugin {
                 }
             }
         }
-
-        // Exception folder ?
 
         for(HomeLocation home : homes) {
             int[] coords = getRegionCoords(home.getX(), home.getZ());
@@ -91,14 +129,13 @@ public final class RegionSaver extends JavaPlugin {
         }
 
         // Remove doubles
-        for(Map.Entry<String, List<String>> entry : regionsName.entrySet()) {
-            List<String> regions = entry.getValue();
-            Set<String> hs = new HashSet<>();
-            hs.addAll(regions);
-            regions.clear();
-            regions.addAll(hs);
-        }
+        regionsName.values().forEach(list -> {
+            Set<String> uniqueRegions = new HashSet<>(list);
+            list.clear();
+            list.addAll(uniqueRegions);
+        });
 
+        if (DEBUG) getInstance().getLogger().info("Regions détectées : " + regionsName);
         return regionsName;
     }
 
@@ -171,16 +208,21 @@ public final class RegionSaver extends JavaPlugin {
         if(!new File(outputFolder, ouputPath).exists()) {
             new File(outputFolder, ouputPath).mkdirs();
         }
+
         for(File region : Objects.requireNonNull(regionFolder.listFiles())) {
-            if(region.getName().endsWith(".mca")) {
-                if(regionsToSave.contains(region.getName())) {
-                    try {
-                        File output = new File(outputFolder, ouputPath + File.separator + region.getName());
-                        Files.copy(region, output);
-                    }
-                    catch(Exception e) {
-                        System.out.println("Error copying " + region.getName());
-                    }
+            if(region.getName().endsWith(".mca") && regionsToSave.contains(region.getName())) {
+                try {
+                    File output = new File(outputFolder, ouputPath + File.separator + region.getName());
+
+                    java.nio.file.Files.copy(region.toPath(), output.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                }
+                catch(Exception e) {
+                    System.out.println("Error copying " + region.getName());
+                }
+
+                if (COPY_COUNTER.incrementAndGet() % BATCH_SIZE == 0) {
+                    try { Thread.sleep(PAUSE_MILLIS); } catch (InterruptedException ignored) {}
                 }
             }
         }

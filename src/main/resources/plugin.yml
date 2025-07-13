@@ -1,5 +1,5 @@
 name: RegionSaver
-version: '1.2'
+version: '1.2.1'
 main: fr.niixoz.regionSaver.RegionSaver
 api-version: '1.21.6'
 authors: [ NiixoZ ]

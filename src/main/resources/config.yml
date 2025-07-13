@@ -1,0 +1,4 @@
+# Nombre de fichiers .mca copiés avant une courte pause
+batchSize: 50
+# Durée de la pause en millisecondes
+pauseMillis: 100

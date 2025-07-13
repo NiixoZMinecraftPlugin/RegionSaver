@@ -25,12 +25,8 @@ public class RegionSaverCommand extends AbstractCommand {
         }
 
         if(args[0].equalsIgnoreCase("save")) {
-            player.sendMessage("[RegionSaver] Sauvegarde des regions...");
-            // Run asynchronously
-            Bukkit.getScheduler().runTaskAsynchronously(RegionSaver.getInstance(), () -> {
-                RegionSaver.saveRegions();
-                player.sendMessage("[RegionSaver] Sauvegarde terminée.");
-            });
+            RegionSaver.getInstance().startBackup(player);
+            return true;
         }
 
         return true;
