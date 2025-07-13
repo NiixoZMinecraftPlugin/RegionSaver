@@ -72,15 +72,6 @@ public final class RegionSaver extends JavaPlugin {
 
                         List<HomeLocation> playerHomesList = getHomes(playerHomes);
                         homes.addAll(playerHomesList);
-
-                        if(PRINT_HOME) {
-                            System.out.println("=================================");
-                            System.out.println("Player: " + username);
-                            for(HomeLocation home : playerHomesList) {
-                                System.out.println("home: " + home.getHomeName() + ", world: " + home.getWorldName() + ", x: " + home.getX() + ", z: " + home.getZ());
-                            }
-                            System.out.println("=================================");
-                        }
                     }
                 }
                 catch(Exception e) {
@@ -108,28 +99,13 @@ public final class RegionSaver extends JavaPlugin {
             regions.addAll(hs);
         }
 
-        if(PRINT_REGIONS) {
-            // Print all regions to save
-            for (Map.Entry<String, List<String>> entry : regionsName.entrySet()) {
-                System.out.println("World: " + entry.getKey());
-                for (String region : entry.getValue()) {
-                    System.out.println("Region: " + region);
-                }
-            }
-
-            // Print total regions to save
-            for(Map.Entry<String, List<String>> entry : regionsName.entrySet()) {
-                System.out.println("World: " + entry.getKey() + ", regions to save: " + entry.getValue().size());
-            }
-        }
-
         return regionsName;
     }
 
     private static void copyRegionsInSaveFolder(HashMap<String, List<String>> regionsName) {
 
         // Clear ouput Folder
-        for(File file : outputFolder.listFiles()) {
+        for(File file : Objects.requireNonNull(outputFolder.listFiles())) {
             deleteDirectory(file);
         }
 
@@ -137,19 +113,14 @@ public final class RegionSaver extends JavaPlugin {
 
         for(File world : Objects.requireNonNull(worldsRegion.listFiles())) {
             if(!isWorldDirectory(world)) continue;
-            if(world.getName().endsWith("_nether")) {
-                File regionFolder = new File(world, "DIM-1/region");
-                loopRegion(regionsName.get(world.getName()), regionFolder, world.getName());
-            }
-            else if(world.getName().endsWith("_the_end")) {
-                File regionFolder = new File(world, "DIM1/region");
-                loopRegion(regionsName.get(world.getName()), regionFolder, world.getName());
-            }
-            else {
-                File regionFolder = getRegionFolder(world);
-                //new File(world, "region");
-                loopRegion(regionsName.get(world.getName()), regionFolder, world.getName());
-            }
+            WorldInfo worldInfo = new WorldInfo();
+            updateWorldInfo(world, worldInfo);
+            if(worldInfo.region != null)
+                loopMCAFolder(regionsName.get(world.getName()), worldInfo.region, FolderType.REGION, world.getName());
+            if(worldInfo.entities != null)
+                loopMCAFolder(regionsName.get(world.getName()), worldInfo.entities, FolderType.ENTITIES, world.getName());
+            if(worldInfo.poi != null)
+                loopMCAFolder(regionsName.get(world.getName()), worldInfo.poi, FolderType.POI, world.getName());
         }
     }
 
@@ -158,37 +129,53 @@ public final class RegionSaver extends JavaPlugin {
         return new File(file, "level.dat").exists();
     }
 
-    private static File getRegionFolder(File file) {
+    private static void updateWorldInfo(File file, WorldInfo worldInfo) {
 
-        // recursive loop in world directory until find the region folder (contains .mca files)
-
-        for(File subFile : file.listFiles()) {
+        for(File subFile : Objects.requireNonNull(file.listFiles())) {
             if(subFile.isDirectory()) {
-                File folder = getRegionFolder(subFile);
-                if(folder != null)
-                    return folder;
-            }
-            else if(subFile.getName().endsWith(".mca")) {
-                return subFile.getParentFile();
+                boolean found = checkIfMCAInFolder(subFile);
+                try {
+                    switch (FolderType.valueOf(subFile.getName().toUpperCase())) {
+                        case REGION:
+                            worldInfo.region = subFile;
+                            break;
+                        case POI:
+                            worldInfo.poi = subFile;
+                            break;
+                        case ENTITIES:
+                            worldInfo.entities = subFile;
+                            break;
+                    }
+                }
+                catch (Exception e){}
+                if(!found) {
+                    updateWorldInfo(subFile, worldInfo);
+                }
             }
         }
-
-        return null;
     }
 
-    private static void loopRegion(List<String> regionsToSave, File regionFolder, String worldName) {
+    private static boolean checkIfMCAInFolder(File folder) {
+        for(File subFile : Objects.requireNonNull(folder.listFiles())) {
+            if(subFile.getName().endsWith(".mca")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void loopMCAFolder(List<String> regionsToSave, File regionFolder, FolderType folderType, String worldName) {
         if(regionsToSave == null)
             return;
-        if(!new File(outputFolder, worldName).exists()) {
-            new File(outputFolder, worldName).mkdirs();
+        String ouputPath = worldName + File.separator + folderType.name().toLowerCase();
+        if(!new File(outputFolder, ouputPath).exists()) {
+            new File(outputFolder, ouputPath).mkdirs();
         }
         for(File region : Objects.requireNonNull(regionFolder.listFiles())) {
             if(region.getName().endsWith(".mca")) {
                 if(regionsToSave.contains(region.getName())) {
                     try {
-                        File output = new File(outputFolder, worldName + File.separator + region.getName());
-                        System.out.println("Input - File: " + region + " path: " + region.getAbsolutePath());
-                        System.out.println("Output - File: " + output + " path: " + output.getAbsolutePath());
+                        File output = new File(outputFolder, ouputPath + File.separator + region.getName());
                         Files.copy(region, output);
                     }
                     catch(Exception e) {
@@ -266,5 +253,25 @@ public final class RegionSaver extends JavaPlugin {
             System.out.println("Failed to delete directory " + directoryToBeDeleted);
         }
         return directoryToBeDeleted.delete();
+    }
+
+    private static class WorldInfo {
+        private File region = null;
+        private File poi = null;
+        private File entities = null;
+
+        WorldInfo() {}
+
+        WorldInfo(File region, File poi, File entities) {
+            this.region = region;
+            this.poi = poi;
+            this.entities = entities;
+        }
+    }
+
+    private enum FolderType {
+        REGION,
+        POI,
+        ENTITIES
     }
 }

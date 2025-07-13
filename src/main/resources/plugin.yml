@@ -1,7 +1,7 @@
 name: RegionSaver
-version: '1.0'
+version: '1.2'
 main: fr.niixoz.regionSaver.RegionSaver
-api-version: '1.20'
+api-version: '1.21.6'
 authors: [ NiixoZ ]
 description: Region Saver plugin for EnderCube
 
